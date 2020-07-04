@@ -2,7 +2,7 @@ package gocache
 
 import (
 	"fmt"
-	db "gocache/internal/app/gocache/db"
+	db "github.com/TrumanDu/gocache/internal/app/gocache/db"
 )
 
 func Run() {

@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	app "gocache/internal/app/gocache"
+	app "github.com/TrumanDu/gocache/internal/app/gocache"
 )
 
 func main() {
