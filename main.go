@@ -1,14 +1,13 @@
 package main
 
 import (
-	"fmt"
-	app "github.com/TrumanDu/gocache/internal/app/gocache"
+	cmd "github.com/TrumanDu/gocache/cmd/gocache"
+	log "github.com/TrumanDu/gocache/tools/log"
 )
 
 func main() {
 
-	fmt.Println("gocache start to run!")
-
-	app.Run()
+	log.Infof("start to run!")
+	cmd.Run()
 
 }
