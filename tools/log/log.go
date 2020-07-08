@@ -32,7 +32,7 @@ var (
 	logger Logger = &defaultLogLogger{}
 
 	// default log level is info
-	level = LevelInfo
+	level = LevelError
 
 	// prefix for all messages, default is "[Gocache]"
 	prefix = "[Gocache]"
