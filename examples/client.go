@@ -4,11 +4,19 @@ import (
 	"fmt"
 	"github.com/TrumanDu/gocache/tools/log"
 	"net"
+	"strconv"
 )
 
 func main() {
-	conn, _ := net.Dial("tcp", "127.0.0.1:6379")
 
+	event := 0x1
+
+	fmt.Println(strconv.Itoa(event))
+	conn, err := net.Dial("tcp", "127.0.0.1:6379")
+	if err != nil {
+		log.Error(err)
+		return
+	}
 	defer conn.Close()
 
 	//发送数据
