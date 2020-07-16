@@ -2,16 +2,13 @@ package main
 
 import (
 	"fmt"
-	"github.com/TrumanDu/gocache/tools/log"
 	"net"
-	"strconv"
+
+	"github.com/TrumanDu/gocache/tools/log"
 )
 
 func main() {
 
-	event := 0x1
-
-	fmt.Println(strconv.Itoa(event))
 	conn, err := net.Dial("tcp", "127.0.0.1:6379")
 	if err != nil {
 		log.Error(err)
@@ -19,13 +16,19 @@ func main() {
 	}
 	defer conn.Close()
 
-	//发送数据
-	conn.Write([]byte("set a a"))
+	fmt.Println(send("set a a", conn))
+	fmt.Println(send("get a", conn))
+
+}
+
+func send(command string, conn net.Conn) string {
+	conn.Write([]byte(command))
 	buf := make([]byte, 1024)
 	n, err1 := conn.Read(buf)
 	if err1 != nil {
 		log.Error(err1)
-		return
+		return ""
 	}
-	fmt.Println(string(buf[:n]))
+
+	return string(buf[:n])
 }

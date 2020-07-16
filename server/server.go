@@ -1,11 +1,12 @@
 package gocache
 
 import (
-	"fmt"
-	cache "github.com/TrumanDu/gocache/store/cache"
-	log "github.com/TrumanDu/gocache/tools/log"
 	"net"
 	"strconv"
+	"strings"
+
+	"github.com/TrumanDu/gocache/store/cache"
+	log "github.com/TrumanDu/gocache/tools/log"
 )
 
 func Run() {
@@ -25,6 +26,14 @@ func Run() {
 
 	defer listen.Close()
 
+	epoller, err := NewEpoller()
+
+	if err != nil {
+		panic(err)
+	}
+
+	go run(epoller)
+
 	for {
 		//阻塞等待用户链接
 		conn, err := listen.Accept()
@@ -32,24 +41,51 @@ func Run() {
 			log.Error(err)
 			return
 		}
+		epoller.Add(conn)
 
-		go handleConnect(conn)
-
+		// go handleConnect(conn)
 	}
 
-	cache.Set("truman", "trumandu")
-
-	fmt.Println(cache.Get("truman"))
 }
 
-func handleConnect(conn net.Conn) {
+func run(epoller *Epoller) {
+	for {
+		connections, err := epoller.Wait()
+		if err != nil {
+			log.Error(err)
+			continue
+		}
+
+		for _, conn := range connections {
+			handleConnect(epoller, conn)
+		}
+	}
+
+}
+
+func handleConnect(epoller *Epoller, conn net.Conn) {
+	if conn == nil {
+		return
+	}
+
 	buf := make([]byte, 1024)
 	n, err1 := conn.Read(buf)
 	if err1 != nil {
-		log.Error(err1)
+		if err := epoller.Remove(conn); err != nil {
+			log.Error("failed to remove %v", err)
+		}
+		conn.Close()
 		return
 	}
-	fmt.Println("buf = ", string(buf[:n])) //指定打印的切片，即读了多少就打印多少
-	conn.Write([]byte("OK"))
-	defer conn.Close() //关闭当前用户链接
+
+	msg := string(buf[:n])
+	array := strings.Split(msg, " ")
+
+	switch strings.ToLower(array[0]) {
+	case "set":
+		cache.Set(array[1], array[2])
+		conn.Write([]byte("OK"))
+	case "get":
+		conn.Write([]byte(cache.Get(array[1])))
+	}
 }
