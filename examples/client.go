@@ -9,6 +9,8 @@ import (
 
 func main() {
 
+	fmt.Println(len([]byte("\r\n")))
+
 	conn, err := net.Dial("tcp", "127.0.0.1:6379")
 	if err != nil {
 		log.Error(err)
@@ -16,8 +18,8 @@ func main() {
 	}
 	defer conn.Close()
 
-	fmt.Println(send("set a a", conn))
-	fmt.Println(send("get a", conn))
+	fmt.Println(send("set truman hello-world", conn))
+	fmt.Println(send("get truman", conn))
 
 }
 
