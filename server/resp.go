@@ -139,15 +139,15 @@ func (r *Reader) readArray(line []byte) ([]*Value, error) {
 	return values, nil
 }
 
-type Write struct {
+type Writer struct {
 	*bufio.Writer
 }
 
-func NewWriter(writer io.Writer) *Write {
-	return &Write{bufio.NewWriterSize(writer, defaultSize)}
+func NewWriter(writer io.Writer) *Writer {
+	return &Writer{bufio.NewWriterSize(writer, defaultSize)}
 }
 
-func (w *Write) WriteCommand(args ...string) error {
+func (w *Writer) WriteCommand(args ...string) error {
 	w.WriteByte(TypeArray)
 	w.WriteString(strconv.Itoa(len(args)))
 	w.Write(CRLF)

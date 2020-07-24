@@ -9,6 +9,8 @@ import (
 	log "github.com/TrumanDu/gocache/tools/log"
 )
 
+var clientsMap = make(map[*net.Conn]*clientConn)
+
 func Run() {
 	// 初始化socket 端口监听
 	// epoll 建立client连接
@@ -41,8 +43,8 @@ func Run() {
 			log.Error(err)
 			return
 		}
+		clientsMap[&conn] = &clientConn{conn, conn.RemoteAddr().String(), NewReader(conn), NewWriter(conn)}
 		epoller.Add(conn)
-
 		// go handleConnect(conn)
 	}
 
@@ -68,8 +70,9 @@ func handleConnect(epoller *Epoller, conn net.Conn) {
 		return
 	}
 
-	buf := make([]byte, 1024)
-	n, err1 := conn.Read(buf)
+	clientConn := clientsMap[&conn]
+	value, err1 := clientConn.rd.ReadValue()
+
 	if err1 != nil {
 		if err := epoller.Remove(conn); err != nil {
 			log.Error("failed to remove %v", err)
@@ -78,14 +81,53 @@ func handleConnect(epoller *Epoller, conn net.Conn) {
 		return
 	}
 
-	msg := string(buf[:n])
-	array := strings.Split(msg, " ")
+	switch value.Type {
+	case TypeSimpleError:
+		log.Error(value.Err)
+	case TypeSimpleString:
+		if strings.EqualFold(strings.ToLower(value.Str), "ping") {
+			clientConn.wt.WriteCommand("PONG")
+		}
+	case TypeArray:
+		array := value.Elems
+		command := strings.ToLower(array[0].Str)
+		switch command {
+		case "set":
+			if len(array) < 3 {
+				invalidSyntax(clientConn)
+			} else {
+				cache.Set(array[1].Str, array[2].Str)
+			}
+		case "get":
+			if len(array) < 2 {
+				invalidSyntax(clientConn)
+			} else {
+				data := cache.Get(array[1].Str)
+				clientConn.wt.WriteCommand(data)
+			}
+		case "del":
+			if len(array) < 2 {
+				invalidSyntax(clientConn)
+			} else {
+				cache.Del(array[1].Str)
+				clientConn.wt.WriteCommand("OK")
+			}
+		default:
+			invalidSyntax(clientConn)
+		}
 
-	switch strings.ToLower(array[0]) {
-	case "set":
-		cache.Set(array[1], array[2])
-		conn.Write([]byte("OK"))
-	case "get":
-		conn.Write([]byte(cache.Get(array[1])))
+	default:
+		invalidSyntax(clientConn)
 	}
+}
+
+func invalidSyntax(conn *clientConn) {
+	conn.wt.Write([]byte("-resp:invalid syntax \r\n"))
+}
+
+type clientConn struct {
+	conn net.Conn
+	addr string
+	rd   *Reader
+	wt   *Writer
 }
