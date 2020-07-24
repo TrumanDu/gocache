@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"math/big"
 	"strconv"
 )
 
@@ -30,7 +31,24 @@ const (
 	TypeStream = "$EOF:" //
 )
 
+type Value struct {
+	Type    byte
+	Str     string
+	StrFmt  string
+	Err     string
+	Integer int64
+	Boolean bool
+	Double  float64
+	BigInt  *big.Int
+	Elems   []*Value // for array & set
+	// KV           *linkedhashmap.Map
+	// Attrs        *linkedhashmap.Map
+	StreamMarker string
+}
+
 var ErrInvalidSyntax = errors.New("resp:invalid syntax")
+var defaultSize = 32 * 1024
+var CRLF = []byte("\r\n")
 
 // Reader struct
 type Reader struct {
@@ -39,12 +57,12 @@ type Reader struct {
 
 // NewReader method
 func NewReader(reader io.Reader) *Reader {
-	defaultSize := 32 * 1024
+
 	return &Reader{Reader: bufio.NewReaderSize(reader, defaultSize)}
 }
 
 // ReadValue method
-func (r *Reader) ReadValue() ([]byte, error) {
+func (r *Reader) ReadValue() (*Value, error) {
 	line, err := r.readLine()
 	if err != nil {
 		return nil, err
@@ -52,17 +70,21 @@ func (r *Reader) ReadValue() ([]byte, error) {
 	if len(line) < 3 {
 		return nil, ErrInvalidSyntax
 	}
-
-	switch line[0] {
-	case TypeSimpleString, TypeNumber, TypeSimpleError, TypeBoolean, TypeDouble, TypeBigNumber:
-		return line, nil
-	case TypeBlobString, TypeBlobError:
-		return r.readBlobString(line)
-	case TypeArray:
-
-	default:
-		return nil, ErrInvalidSyntax
+	v := &Value{
+		Type: line[0],
 	}
+	switch v.Type {
+	case TypeSimpleString, TypeSimpleError:
+		v.Str, err = r.readSimpleString(line)
+	case TypeNumber, TypeBoolean, TypeDouble, TypeBigNumber:
+		// TODO 待实现
+		v.Str, err = r.readSimpleString(line)
+	case TypeBlobString, TypeBlobError:
+		v.Str, err = r.readBlobString(line)
+	case TypeArray:
+		v.Elems, err = r.readArray(line)
+	}
+	return v, err
 }
 
 // readLine \r\n
@@ -83,15 +105,59 @@ func (r *Reader) getCount(line []byte) (int, error) {
 	return strconv.Atoi(string(line[1:end]))
 }
 
-func (r *Reader) readBlobString(line []byte) ([]byte, error) {
+func (r *Reader) readSimpleString(line []byte) (string, error) {
+	return string(line[1 : len(line)-2]), nil
+}
+
+func (r *Reader) readBlobString(line []byte) (string, error) {
 	count, err := r.getCount(line)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	buf := make([]byte, count+2)
 	_, err = io.ReadFull(r, buf)
 	if err != nil {
+		return "", err
+	}
+	return string(buf[:count]), nil
+}
+
+func (r *Reader) readArray(line []byte) ([]*Value, error) {
+	count, err := r.getCount(line)
+	if err != nil {
 		return nil, err
 	}
-	return buf, nil
+	var values []*Value
+	for i := 0; i < count; i++ {
+		v, err := r.ReadValue()
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+
+	return values, nil
+}
+
+type Write struct {
+	*bufio.Writer
+}
+
+func NewWriter(writer io.Writer) *Write {
+	return &Write{bufio.NewWriterSize(writer, defaultSize)}
+}
+
+func (w *Write) WriteCommand(args ...string) error {
+	w.WriteByte(TypeArray)
+	w.WriteString(strconv.Itoa(len(args)))
+	w.Write(CRLF)
+	for _, arg := range args {
+		w.WriteByte(TypeBlobString)
+		w.WriteString(strconv.Itoa(len(arg)))
+		w.Write(CRLF)
+		w.WriteString(arg)
+		w.Write(CRLF)
+	}
+	w.Flush()
+	return nil
 }
