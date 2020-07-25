@@ -1,6 +1,7 @@
 # go cache:shit:
 go cache just for learn redis design and golang
 
+:shit:一样的代码。。。。go语言初学者，请勿吐槽！
 ## 计划完成功能：
 功能点|进度|备注
 ---|---|---
@@ -34,7 +35,7 @@ Null|RESP2.0 null
 命令|demo|返回值|备注
 ---|---|---|---
 ping| |PONG|
-quit| ||OK|
+quit| |OK||
 set|set truman truman|OK| 
 get|get truman |truman or null| 
 del|del truman |1 or 0| 
