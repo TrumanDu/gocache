@@ -173,6 +173,21 @@ func (w *RedisWriter) WriteNumber(num int) error {
 	return nil
 }
 
+func (w *RedisWriter) WriteArray(args []string) error {
+	w.WriteByte(TypeArray)
+	w.WriteString(strconv.Itoa(len(args)))
+	w.Write(CRLF)
+	for _, arg := range args {
+		w.WriteByte(TypeBlobString)
+		w.WriteString(strconv.Itoa(len(arg)))
+		w.Write(CRLF)
+		w.WriteString(arg)
+		w.Write(CRLF)
+	}
+	w.Flush()
+	return nil
+}
+
 func (w *RedisWriter) WriteCommand(args ...string) error {
 	w.WriteByte(TypeArray)
 	w.WriteString(strconv.Itoa(len(args)))

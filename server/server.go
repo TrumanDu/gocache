@@ -46,7 +46,6 @@ func Run() {
 		key := conn.RemoteAddr().String()
 		clientsMap[key] = &clientConn{conn, conn.RemoteAddr().String(), NewRedisReader(conn), NewRedisWriter(conn)}
 		epoller.Add(conn)
-		replyString(clientsMap[key], "PONG")
 		// go handleConnect(conn)
 	}
 
@@ -128,8 +127,11 @@ func handleConnect(epoller *Epoller, conn net.Conn) {
 			} else {
 				replyNumber(clientConn, cache.Del(array[1].Str))
 			}
+		case "command":
+			empty := make([]string, 0)
+			replyArray(clientConn, empty)
 		default:
-			invalidSyntax(clientConn)
+			commandNotSupport(clientConn, array[0].Str)
 		}
 
 	default:
@@ -143,9 +145,24 @@ func invalidSyntax(conn *clientConn) {
 		log.Error("response message error:", err)
 	}
 }
+func commandNotSupport(conn *clientConn, command string) {
+	str := "not support redis command:" + command
+	log.Info(str)
+	_, err := conn.wt.Write([]byte("-resp:" + str + " \r\n"))
+	if err != nil {
+		log.Error("response message error:", err)
+	}
+}
 
 func replyString(client *clientConn, message string) {
 	err := client.wt.WriteSimpleString(message)
+	if err != nil {
+		log.Error("response message error:", err)
+	}
+}
+
+func replyArray(client *clientConn, messages []string) {
+	err := client.wt.WriteArray(messages)
 	if err != nil {
 		log.Error("response message error:", err)
 	}
