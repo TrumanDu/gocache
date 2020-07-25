@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"net"
+	"strconv"
 
 	"github.com/TrumanDu/gocache/tools/log"
 )
@@ -10,6 +12,10 @@ import (
 func main() {
 
 	fmt.Println(len([]byte("\r\n")))
+	line := []byte("*3\r\n+set\r\n+truman\r\n+truman\r\n")
+	end := bytes.IndexByte(line, '\r')
+	count, _ := strconv.Atoi(string(line[1:end]))
+	fmt.Println(strconv.Itoa(count))
 
 	m := make(map[string]string)
 	m["h"] = "h"
