@@ -51,18 +51,18 @@ var defaultSize = 32 * 1024
 var CRLF = []byte("\r\n")
 
 // Reader struct
-type Reader struct {
+type RedisReader struct {
 	*bufio.Reader
 }
 
-// NewReader method
-func NewReader(reader io.Reader) *Reader {
+// NewRedisReader method
+func NewRedisReader(reader io.Reader) *RedisReader {
 
-	return &Reader{Reader: bufio.NewReaderSize(reader, defaultSize)}
+	return &RedisReader{Reader: bufio.NewReaderSize(reader, defaultSize)}
 }
 
 // ReadValue method
-func (r *Reader) ReadValue() (*Value, error) {
+func (r *RedisReader) ReadValue() (*Value, error) {
 	line, err := r.readLine()
 	if err != nil {
 		return nil, err
@@ -88,7 +88,7 @@ func (r *Reader) ReadValue() (*Value, error) {
 }
 
 // readLine \r\n
-func (r *Reader) readLine() ([]byte, error) {
+func (r *RedisReader) readLine() ([]byte, error) {
 	line, err := r.ReadBytes('\n')
 	if err != nil {
 		return nil, err
@@ -100,16 +100,16 @@ func (r *Reader) readLine() ([]byte, error) {
 	return nil, ErrInvalidSyntax
 }
 
-func (r *Reader) getCount(line []byte) (int, error) {
+func (r *RedisReader) getCount(line []byte) (int, error) {
 	end := bytes.IndexByte(line, '\r')
 	return strconv.Atoi(string(line[1:end]))
 }
 
-func (r *Reader) readSimpleString(line []byte) (string, error) {
+func (r *RedisReader) readSimpleString(line []byte) (string, error) {
 	return string(line[1 : len(line)-2]), nil
 }
 
-func (r *Reader) readBlobString(line []byte) (string, error) {
+func (r *RedisReader) readBlobString(line []byte) (string, error) {
 	count, err := r.getCount(line)
 	if err != nil {
 		return "", err
@@ -122,7 +122,7 @@ func (r *Reader) readBlobString(line []byte) (string, error) {
 	return string(buf[:count]), nil
 }
 
-func (r *Reader) readArray(line []byte) ([]*Value, error) {
+func (r *RedisReader) readArray(line []byte) ([]*Value, error) {
 	count, err := r.getCount(line)
 	if err != nil {
 		return nil, err
@@ -139,15 +139,41 @@ func (r *Reader) readArray(line []byte) ([]*Value, error) {
 	return values, nil
 }
 
-type Writer struct {
+type RedisWriter struct {
 	*bufio.Writer
 }
 
-func NewWriter(writer io.Writer) *Writer {
-	return &Writer{bufio.NewWriterSize(writer, defaultSize)}
+func NewRedisWriter(writer io.Writer) *RedisWriter {
+	return &RedisWriter{bufio.NewWriterSize(writer, defaultSize)}
 }
 
-func (w *Writer) WriteCommand(args ...string) error {
+func (w *RedisWriter) WriteSimpleString(str string) error {
+	w.WriteByte(TypeSimpleString)
+	w.WriteString(str)
+	w.Write(CRLF)
+	w.Flush()
+	return nil
+}
+
+// WriteNull 实现resp2版本
+func (w *RedisWriter) WriteNull() error {
+	w.WriteByte(TypeBlobString)
+	w.WriteString("-1")
+	w.Write(CRLF)
+	w.Flush()
+	return nil
+}
+
+func (w *RedisWriter) WriteNumber(num int) error {
+
+	w.WriteByte(TypeNumber)
+	w.Write([]byte(strconv.Itoa(num)))
+	w.Write(CRLF)
+	w.Flush()
+	return nil
+}
+
+func (w *RedisWriter) WriteCommand(args ...string) error {
 	w.WriteByte(TypeArray)
 	w.WriteString(strconv.Itoa(len(args)))
 	w.Write(CRLF)

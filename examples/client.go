@@ -11,6 +11,15 @@ func main() {
 
 	fmt.Println(len([]byte("\r\n")))
 
+	m := make(map[string]string)
+	m["h"] = "h"
+	//delete(m,"h")
+	if _, ok := m["h"]; ok {
+		fmt.Println(1)
+	} else {
+		fmt.Println(0)
+	}
+
 	conn, err := net.Dial("tcp", "127.0.0.1:6379")
 	if err != nil {
 		log.Error(err)

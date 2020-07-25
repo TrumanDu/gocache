@@ -49,7 +49,7 @@ func (t *defaultLogLogger) Logf(format string, v ...interface{}) {
 }
 
 func init() {
-	switch os.Getenv("DOCACHE_LOG_LEVEL") {
+	switch os.Getenv("GOCACHE_LOG_LEVEL") {
 	case "debug":
 		level = LevelDebug
 	case "info":

@@ -9,7 +9,7 @@ import (
 	log "github.com/TrumanDu/gocache/tools/log"
 )
 
-var clientsMap = make(map[*net.Conn]*clientConn)
+var clientsMap = make(map[string]*clientConn)
 
 func Run() {
 	// 初始化socket 端口监听
@@ -43,8 +43,10 @@ func Run() {
 			log.Error(err)
 			return
 		}
-		clientsMap[&conn] = &clientConn{conn, conn.RemoteAddr().String(), NewReader(conn), NewWriter(conn)}
+		key := conn.RemoteAddr().String()
+		clientsMap[key] = &clientConn{conn, conn.RemoteAddr().String(), NewRedisReader(conn), NewRedisWriter(conn)}
 		epoller.Add(conn)
+		replyString(clientsMap[key], "PONG")
 		// go handleConnect(conn)
 	}
 
@@ -54,7 +56,7 @@ func run(epoller *Epoller) {
 	for {
 		connections, err := epoller.Wait()
 		if err != nil {
-			log.Error(err)
+			log.Error("epoll wait error:", err)
 			continue
 		}
 
@@ -69,13 +71,13 @@ func handleConnect(epoller *Epoller, conn net.Conn) {
 	if conn == nil {
 		return
 	}
-
-	clientConn := clientsMap[&conn]
+	key := conn.RemoteAddr().String()
+	clientConn := clientsMap[key]
 	value, err1 := clientConn.rd.ReadValue()
 
 	if err1 != nil {
 		if err := epoller.Remove(conn); err != nil {
-			log.Error("failed to remove %v", err)
+			log.Error("failed to remove :", err)
 		}
 		conn.Close()
 		return
@@ -85,32 +87,46 @@ func handleConnect(epoller *Epoller, conn net.Conn) {
 	case TypeSimpleError:
 		log.Error(value.Err)
 	case TypeSimpleString:
-		if strings.EqualFold(strings.ToLower(value.Str), "ping") {
-			clientConn.wt.WriteCommand("PONG")
-		}
+		log.Error("wait todo...")
 	case TypeArray:
 		array := value.Elems
 		command := strings.ToLower(array[0].Str)
 		switch command {
+		case "ping":
+			replyString(clientConn, "PONG")
+		case "quit":
+			replyString(clientConn, "OK")
+			clientConn.conn.Close()
 		case "set":
 			if len(array) < 3 {
 				invalidSyntax(clientConn)
 			} else {
 				cache.Set(array[1].Str, array[2].Str)
 			}
+			replyString(clientConn, "OK")
+		case "exists":
+			if len(array) < 2 {
+				invalidSyntax(clientConn)
+			} else {
+				replyNumber(clientConn, cache.Exists(array[1].Str))
+			}
 		case "get":
 			if len(array) < 2 {
 				invalidSyntax(clientConn)
 			} else {
 				data := cache.Get(array[1].Str)
-				clientConn.wt.WriteCommand(data)
+				if data != "" {
+					replyString(clientConn, data)
+				} else {
+					replyNull(clientConn)
+				}
+
 			}
 		case "del":
 			if len(array) < 2 {
 				invalidSyntax(clientConn)
 			} else {
-				cache.Del(array[1].Str)
-				clientConn.wt.WriteCommand("OK")
+				replyNumber(clientConn, cache.Del(array[1].Str))
 			}
 		default:
 			invalidSyntax(clientConn)
@@ -122,12 +138,35 @@ func handleConnect(epoller *Epoller, conn net.Conn) {
 }
 
 func invalidSyntax(conn *clientConn) {
-	conn.wt.Write([]byte("-resp:invalid syntax \r\n"))
+	_, err := conn.wt.Write([]byte("-resp:invalid syntax \r\n"))
+	if err != nil {
+		log.Error("response message error:", err)
+	}
+}
+
+func replyString(client *clientConn, message string) {
+	err := client.wt.WriteSimpleString(message)
+	if err != nil {
+		log.Error("response message error:", err)
+	}
+}
+
+func replyNull(client *clientConn) {
+	err := client.wt.WriteNull()
+	if err != nil {
+		log.Error("response null message error:", err)
+	}
+}
+func replyNumber(client *clientConn, num int) {
+	err := client.wt.WriteNumber(num)
+	if err != nil {
+		log.Error("response message error:", err)
+	}
 }
 
 type clientConn struct {
 	conn net.Conn
 	addr string
-	rd   *Reader
-	wt   *Writer
+	rd   *RedisReader
+	wt   *RedisWriter
 }
