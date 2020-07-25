@@ -7,10 +7,13 @@ redis选用的单Reactor模型，虽然go 编程模型对于goroutine创建属�
 
 Reactor模型其实就是IO多路复用+池化技术。
 
+多说一句：复用指的是复用了1个线程，一个线程可以同时处理多个fd(文件描述符)
+
 Reactor架构模式允许事件驱动的应用通过多路分发的机制去处理来自不同客户端的多个请求。
 
+## 实践
 
-
+TODO
 
 ## 参考
 1. [百万 Go TCP 连接的思考: epoll方式减少资源占用](https://colobu.com/2019/02/23/1m-go-tcp-connection/)
