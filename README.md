@@ -7,7 +7,7 @@ go cache just for learn redis design and golang
 ---|---|---
 网络编程（Reactor）|100%|linux epoll实现
 Redis协议解析（支持RESP2/3）|100%|仅实现了部分类型，详见以下
-多线程IO||
+多线程IO|100%|
 string 常用操作|100%|
 hash 常用操作||
 aof持久化||

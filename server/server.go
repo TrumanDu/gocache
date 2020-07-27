@@ -1,15 +1,19 @@
-package gocache
+package server
 
 import (
+	"container/list"
 	"net"
+	"runtime"
 	"strconv"
 	"strings"
 
 	"github.com/TrumanDu/gocache/store/cache"
 	log "github.com/TrumanDu/gocache/tools/log"
+	pool "github.com/TrumanDu/gocache/tools/pool"
 )
 
 var clientsMap = make(map[string]*clientConn)
+var ioPool = pool.NewPool(runtime.NumCPU())
 
 func Run() {
 	// 初始化socket 端口监听
@@ -34,8 +38,21 @@ func Run() {
 		panic(err)
 	}
 
-	go run(epoller)
+	go listenClientConnect(epoller, listen)
 
+	for {
+		connections, err := epoller.Wait()
+		if err != nil {
+			log.Error("epoll wait error:", err)
+			continue
+		}
+
+		coreProcess(epoller, connections)
+	}
+
+}
+
+func listenClientConnect(epoller *Epoller, listen net.Listener) {
 	for {
 		//阻塞等待用户链接
 		conn, err := listen.Accept()
@@ -46,139 +63,146 @@ func Run() {
 		key := conn.RemoteAddr().String()
 		clientsMap[key] = &clientConn{conn, conn.RemoteAddr().String(), NewRedisReader(conn), NewRedisWriter(conn)}
 		epoller.Add(conn)
-		// go handleConnect(conn)
 	}
-
 }
 
-func run(epoller *Epoller) {
-	for {
-		connections, err := epoller.Wait()
-		if err != nil {
-			log.Error("epoll wait error:", err)
-			continue
-		}
-
-		for _, conn := range connections {
-			handleConnect(epoller, conn)
-		}
-	}
-
+func coreProcess(epoller *Epoller, connections []net.Conn) {
+	// 1.
+	clientsRead := handleClientsWithPendingReadsUsingThreads(epoller, connections)
+	// 2.
+	responses := handleCommand((*clientsRead).l)
+	// 3.
+	handleClientsWithPendingWritesUsingThreads(responses)
 }
 
-func handleConnect(epoller *Epoller, conn net.Conn) {
-	if conn == nil {
-		return
-	}
-	key := conn.RemoteAddr().String()
-	clientConn := clientsMap[key]
-	value, err1 := clientConn.rd.ReadValue()
+func handleClientsWithPendingReadsUsingThreads(epoller *Epoller, connections []net.Conn) *SyncList {
+	fs := make([]func(), len(connections))
+	clientsRead := NewSyncList()
+	for i := 0; i < len(connections); i++ {
+		conn := connections[i]
+		id := conn.RemoteAddr().String()
+		fs[i] = func() {
+			clientConn := clientsMap[id]
 
-	if err1 != nil {
-		if err := epoller.Remove(conn); err != nil {
-			log.Error("failed to remove :", err)
+			value, err1 := clientConn.rd.ReadValue()
+
+			if err1 != nil {
+				if err := epoller.Remove(conn); err != nil {
+					log.Error("failed to remove :", err)
+				}
+				conn.Close()
+				return
+			}
+
+			data := &readData{id, value}
+			clientsRead.Add(data)
 		}
-		conn.Close()
-		return
 	}
+	ioPool.SyncRun(fs)
+	return clientsRead
+}
 
-	switch value.Type {
-	case TypeSimpleError:
-		log.Error(value.Err)
-	case TypeSimpleString:
-		log.Error("wait todo...")
-	case TypeArray:
-		array := value.Elems
-		command := strings.ToLower(array[0].Str)
-		switch command {
-		case "ping":
-			replyString(clientConn, "PONG")
-		case "quit":
-			replyString(clientConn, "OK")
-			clientConn.conn.Close()
-		case "set":
-			if len(array) < 3 {
-				invalidSyntax(clientConn)
-			} else {
-				cache.Set(array[1].Str, array[2].Str)
-			}
-			replyString(clientConn, "OK")
-		case "exists":
-			if len(array) < 2 {
-				invalidSyntax(clientConn)
-			} else {
-				replyNumber(clientConn, cache.Exists(array[1].Str))
-			}
-		case "get":
-			if len(array) < 2 {
-				invalidSyntax(clientConn)
-			} else {
-				data := cache.Get(array[1].Str)
-				if data != "" {
-					replyString(clientConn, data)
+func handleCommand(clientsRead *list.List) *list.List {
+	responseList := list.New()
+	for e := clientsRead.Front(); e != nil; e = e.Next() {
+
+		data := e.Value.(*readData)
+		value := data.value
+		var responseBytes []byte
+		command := ""
+		switch value.Type {
+
+		case TypeSimpleError:
+			log.Error(value.Err)
+		case TypeSimpleString:
+			log.Error("wait todo...")
+		case TypeArray:
+			array := value.Elems
+			command := strings.ToLower(array[0].Str)
+			switch command {
+			case "ping":
+				responseBytes = ReplyString("PONG")
+			case "quit":
+				responseBytes = ReplyString("OK")
+			case "set":
+				if len(array) < 3 {
+					responseBytes = InvalidSyntax()
 				} else {
-					replyNull(clientConn)
+					cache.Set(array[1].Str, array[2].Str)
+					responseBytes = ReplyString("OK")
 				}
 
+			case "exists":
+				if len(array) < 2 {
+					responseBytes = InvalidSyntax()
+				} else {
+					responseBytes = ReplyNumber(cache.Exists(array[1].Str))
+				}
+			case "get":
+				if len(array) < 2 {
+					responseBytes = InvalidSyntax()
+				} else {
+					data := cache.Get(array[1].Str)
+					if data != "" {
+						responseBytes = ReplyString(data)
+					} else {
+						responseBytes = ReplyNull()
+					}
+
+				}
+			case "del":
+				if len(array) < 2 {
+					responseBytes = InvalidSyntax()
+				} else {
+					responseBytes = ReplyNumber(cache.Del(array[1].Str))
+				}
+			case "command":
+				empty := make([]string, 0)
+				responseBytes = ReplyArray(empty)
+			default:
+				responseBytes = CommandNotSupport(array[0].Str)
 			}
-		case "del":
-			if len(array) < 2 {
-				invalidSyntax(clientConn)
-			} else {
-				replyNumber(clientConn, cache.Del(array[1].Str))
-			}
-		case "command":
-			empty := make([]string, 0)
-			replyArray(clientConn, empty)
+
 		default:
-			commandNotSupport(clientConn, array[0].Str)
+			responseBytes = InvalidSyntax()
 		}
+		obj := &responseData{id: data.id, command: command, data: responseBytes}
+		responseList.PushFront(obj)
+	}
 
-	default:
-		invalidSyntax(clientConn)
-	}
-}
-
-func invalidSyntax(conn *clientConn) {
-	_, err := conn.wt.Write([]byte("-resp:invalid syntax \r\n"))
-	if err != nil {
-		log.Error("response message error:", err)
-	}
-}
-func commandNotSupport(conn *clientConn, command string) {
-	str := "not support redis command:" + command
-	log.Info(str)
-	_, err := conn.wt.Write([]byte("-resp:" + str + " \r\n"))
-	if err != nil {
-		log.Error("response message error:", err)
-	}
+	return responseList
 }
 
-func replyString(client *clientConn, message string) {
-	err := client.wt.WriteSimpleString(message)
-	if err != nil {
-		log.Error("response message error:", err)
+func handleClientsWithPendingWritesUsingThreads(responses *list.List) {
+	fs := make([]func(), (*responses).Len())
+	i := 0
+	for e := responses.Front(); e != nil; e = e.Next() {
+		obj := e.Value.(*responseData)
+		fs[i] = func() {
+			clientConn := clientsMap[obj.id]
+			_, err := clientConn.wt.Write(obj.data)
+			if strings.ToLower(obj.command) == "quit" {
+				clientConn.conn.Close()
+			}
+			if err != nil {
+				log.Error("response message error:", err)
+			}
+			clientConn.wt.Flush()
+		}
+		i = i + 1
 	}
+	ioPool.SyncRun(fs)
 }
 
-func replyArray(client *clientConn, messages []string) {
-	err := client.wt.WriteArray(messages)
-	if err != nil {
-		log.Error("response message error:", err)
-	}
+type readData struct {
+	id    string
+	value *Value
 }
 
-func replyNull(client *clientConn) {
-	err := client.wt.WriteNull()
-	if err != nil {
-		log.Error("response null message error:", err)
-	}
-}
-func replyNumber(client *clientConn, num int) {
-	err := client.wt.WriteNumber(num)
-	if err != nil {
-		log.Error("response message error:", err)
-	}
+type responseData struct {
+	id      string
+	command string
+	data    []byte
 }
 
 type clientConn struct {

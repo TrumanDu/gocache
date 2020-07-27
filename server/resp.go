@@ -1,4 +1,4 @@
-package gocache
+package server
 
 import (
 	"bufio"
@@ -7,6 +7,8 @@ import (
 	"io"
 	"math/big"
 	"strconv"
+
+	log "github.com/TrumanDu/gocache/tools/log"
 )
 
 const (
@@ -147,58 +149,50 @@ func NewRedisWriter(writer io.Writer) *RedisWriter {
 	return &RedisWriter{bufio.NewWriterSize(writer, defaultSize)}
 }
 
-func (w *RedisWriter) WriteSimpleString(str string) error {
-	w.WriteByte(TypeSimpleString)
-	w.WriteString(str)
-	w.Write(CRLF)
-	w.Flush()
-	return nil
+func InvalidSyntax() []byte {
+	return []byte("-resp:invalid syntax\r\n")
+}
+func CommandNotSupport(command string) []byte {
+	str := "not support redis command:" + command
+	log.Info(str)
+	return []byte("-resp:" + str + " \r\n")
 }
 
-// WriteNull 实现resp2版本
-func (w *RedisWriter) WriteNull() error {
-	w.WriteByte(TypeBlobString)
-	w.WriteString("-1")
-	w.Write(CRLF)
-	w.Flush()
-	return nil
+func ReplyString(message string) []byte {
+	bs := []byte{TypeSimpleString}
+	my := []byte(message)
+	bs = append(bs, my...)
+	bs = append(bs, CRLF...)
+	return bs
 }
 
-func (w *RedisWriter) WriteNumber(num int) error {
+func ReplyArray(messages []string) []byte {
+	bs := []byte{TypeArray}
+	my := []byte(strconv.Itoa(len(messages)))
+	bs = append(bs, my...)
+	bs = append(bs, CRLF...)
 
-	w.WriteByte(TypeNumber)
-	w.Write([]byte(strconv.Itoa(num)))
-	w.Write(CRLF)
-	w.Flush()
-	return nil
-}
-
-func (w *RedisWriter) WriteArray(args []string) error {
-	w.WriteByte(TypeArray)
-	w.WriteString(strconv.Itoa(len(args)))
-	w.Write(CRLF)
-	for _, arg := range args {
-		w.WriteByte(TypeBlobString)
-		w.WriteString(strconv.Itoa(len(arg)))
-		w.Write(CRLF)
-		w.WriteString(arg)
-		w.Write(CRLF)
+	for _, arg := range messages {
+		bs = append(bs, TypeBlobString)
+		str := []byte(strconv.Itoa(len(arg)))
+		bs = append(bs, str...)
+		bs = append(bs, CRLF...)
+		data := []byte(arg)
+		bs = append(bs, data...)
+		bs = append(bs, CRLF...)
 	}
-	w.Flush()
-	return nil
+	return bs
 }
 
-func (w *RedisWriter) WriteCommand(args ...string) error {
-	w.WriteByte(TypeArray)
-	w.WriteString(strconv.Itoa(len(args)))
-	w.Write(CRLF)
-	for _, arg := range args {
-		w.WriteByte(TypeBlobString)
-		w.WriteString(strconv.Itoa(len(arg)))
-		w.Write(CRLF)
-		w.WriteString(arg)
-		w.Write(CRLF)
-	}
-	w.Flush()
-	return nil
+func ReplyNull() []byte {
+	bs := []byte{TypeBlobString, '-', '1'}
+	bs = append(bs, CRLF...)
+	return bs
+}
+func ReplyNumber(num int) []byte {
+	bs := []byte{TypeNumber}
+	my := []byte(strconv.Itoa(num))
+	bs = append(bs, my...)
+	bs = append(bs, CRLF...)
+	return bs
 }

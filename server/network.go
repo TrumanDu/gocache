@@ -1,4 +1,4 @@
-package gocache
+package server
 
 import (
 	"net"

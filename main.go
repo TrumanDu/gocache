@@ -1,13 +1,12 @@
 package main
 
 import (
-	cmd "github.com/TrumanDu/gocache/cmd/gocache"
+	server "github.com/TrumanDu/gocache/server"
 	log "github.com/TrumanDu/gocache/tools/log"
 )
 
 func main() {
 
 	log.Infof("start to run!")
-	cmd.Run()
-
+	server.Run()
 }
