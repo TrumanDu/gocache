@@ -25,6 +25,7 @@ func Run() {
 	address := ":" + strconv.Itoa(port)
 	listen, err := net.Listen("tcp", address)
 	log.Infof("listen port:%d", port)
+	log.Infof("cpu num:%d", runtime.NumCPU())
 	if err != nil {
 		log.Error("listen fail:", err)
 		return
