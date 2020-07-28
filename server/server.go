@@ -15,12 +15,12 @@ import (
 var clientsMap = make(map[string]*clientConn)
 var ioPool = pool.NewPool(runtime.NumCPU())
 
+// 初始化socket 端口监听
+// epoll 建立client连接
+// 处理请求：解析命令
+// 主线程执行命令
+// 将结果返回给client
 func Run() {
-	// 初始化socket 端口监听
-	// epoll 建立client连接
-	// 处理请求：解析命令
-	// 主线程执行命令
-	// 将结果返回给client
 	port := 6379
 	address := ":" + strconv.Itoa(port)
 	listen, err := net.Listen("tcp", address)
@@ -68,25 +68,23 @@ func listenClientConnect(epoller *Epoller, listen net.Listener) {
 }
 
 func coreProcess(epoller *Epoller, connections []net.Conn) {
-	// 1.
-	clientsRead := handleClientsWithPendingReadsUsingThreads(epoller, connections)
-	// 2.
-	responses := handleCommand((*clientsRead).l)
-	// 3.
+	// 1.多线程读取解析client发来的数据（命令和数据类型等）
+	clientsReadSyncList := handleClientsWithPendingReadsUsingThreads(epoller, connections)
+	// 2.单线程执行command
+	responses := handleCommand((*clientsReadSyncList).list)
+	// 3.多线程向client发送响应数据
 	handleClientsWithPendingWritesUsingThreads(responses)
 }
 
 func handleClientsWithPendingReadsUsingThreads(epoller *Epoller, connections []net.Conn) *SyncList {
-	fs := make([]func(), len(connections))
-	clientsRead := NewSyncList()
+	funcs := make([]func(), len(connections))
+	clientsReadSyncList := NewSyncList()
 	for i := 0; i < len(connections); i++ {
 		conn := connections[i]
 		id := conn.RemoteAddr().String()
-		fs[i] = func() {
+		funcs[i] = func() {
 			clientConn := clientsMap[id]
-
 			value, err1 := clientConn.rd.ReadValue()
-
 			if err1 != nil {
 				if err := epoller.Remove(conn); err != nil {
 					log.Error("failed to remove :", err)
@@ -96,11 +94,11 @@ func handleClientsWithPendingReadsUsingThreads(epoller *Epoller, connections []n
 			}
 
 			data := &readData{id, value}
-			clientsRead.Add(data)
+			clientsReadSyncList.Add(data)
 		}
 	}
-	ioPool.SyncRun(fs)
-	return clientsRead
+	ioPool.SyncRun(funcs)
+	return clientsReadSyncList
 }
 
 func handleCommand(clientsRead *list.List) *list.List {
@@ -109,6 +107,8 @@ func handleCommand(clientsRead *list.List) *list.List {
 
 		data := e.Value.(*readData)
 		value := data.value
+		id := data.id
+		wt := clientsMap[id].wt
 		var responseBytes []byte
 		command := ""
 		switch value.Type {
@@ -122,50 +122,50 @@ func handleCommand(clientsRead *list.List) *list.List {
 			command := strings.ToLower(array[0].Str)
 			switch command {
 			case "ping":
-				responseBytes = ReplyString("PONG")
+				responseBytes = wt.replyString("PONG")
 			case "quit":
-				responseBytes = ReplyString("OK")
+				responseBytes = wt.replyString("OK")
 			case "set":
 				if len(array) < 3 {
-					responseBytes = InvalidSyntax()
+					responseBytes = wt.replyInvalidSyntax()
 				} else {
 					cache.Set(array[1].Str, array[2].Str)
-					responseBytes = ReplyString("OK")
+					responseBytes = wt.replyString("OK")
 				}
 
 			case "exists":
 				if len(array) < 2 {
-					responseBytes = InvalidSyntax()
+					responseBytes = wt.replyInvalidSyntax()
 				} else {
-					responseBytes = ReplyNumber(cache.Exists(array[1].Str))
+					responseBytes = wt.replyNumber(cache.Exists(array[1].Str))
 				}
 			case "get":
 				if len(array) < 2 {
-					responseBytes = InvalidSyntax()
+					responseBytes = wt.replyInvalidSyntax()
 				} else {
 					data := cache.Get(array[1].Str)
 					if data != "" {
-						responseBytes = ReplyString(data)
+						responseBytes = wt.replyString(data)
 					} else {
-						responseBytes = ReplyNull()
+						responseBytes = wt.replyNull()
 					}
 
 				}
 			case "del":
 				if len(array) < 2 {
-					responseBytes = InvalidSyntax()
+					responseBytes = wt.replyInvalidSyntax()
 				} else {
-					responseBytes = ReplyNumber(cache.Del(array[1].Str))
+					responseBytes = wt.replyNumber(cache.Del(array[1].Str))
 				}
 			case "command":
 				empty := make([]string, 0)
-				responseBytes = ReplyArray(empty)
+				responseBytes = wt.replyArray(empty)
 			default:
-				responseBytes = CommandNotSupport(array[0].Str)
+				responseBytes = wt.replyCommandNotSupport(array[0].Str)
 			}
 
 		default:
-			responseBytes = InvalidSyntax()
+			responseBytes = wt.replyInvalidSyntax()
 		}
 		obj := &responseData{id: data.id, command: command, data: responseBytes}
 		responseList.PushFront(obj)
@@ -195,6 +195,13 @@ func handleClientsWithPendingWritesUsingThreads(responses *list.List) {
 	ioPool.SyncRun(fs)
 }
 
+type clientConn struct {
+	conn net.Conn
+	addr string
+	rd   *RedisReader
+	wt   *RedisWriter
+}
+
 type readData struct {
 	id    string
 	value *Value
@@ -204,11 +211,4 @@ type responseData struct {
 	id      string
 	command string
 	data    []byte
-}
-
-type clientConn struct {
-	conn net.Conn
-	addr string
-	rd   *RedisReader
-	wt   *RedisWriter
 }

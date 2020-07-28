@@ -50,7 +50,7 @@ type Value struct {
 
 var ErrInvalidSyntax = errors.New("resp:invalid syntax")
 var defaultSize = 32 * 1024
-var CRLF = []byte("\r\n")
+var CRLF = "\r\n"
 
 // Reader struct
 type RedisReader struct {
@@ -149,50 +149,43 @@ func NewRedisWriter(writer io.Writer) *RedisWriter {
 	return &RedisWriter{bufio.NewWriterSize(writer, defaultSize)}
 }
 
-func InvalidSyntax() []byte {
-	return []byte("-resp:invalid syntax\r\n")
+func (w *RedisWriter) replyInvalidSyntax() []byte {
+	return []byte("-resp:invalid syntax" + CRLF)
 }
-func CommandNotSupport(command string) []byte {
+func (w *RedisWriter) replyCommandNotSupport(command string) []byte {
 	str := "not support redis command:" + command
 	log.Info(str)
-	return []byte("-resp:" + str + " \r\n")
+	return []byte("-resp:" + str + CRLF)
 }
 
-func ReplyString(message string) []byte {
+func (w *RedisWriter) replyString(message string) []byte {
 	bs := []byte{TypeSimpleString}
-	my := []byte(message)
+	my := []byte(message + CRLF)
 	bs = append(bs, my...)
-	bs = append(bs, CRLF...)
 	return bs
 }
 
-func ReplyArray(messages []string) []byte {
+func (w *RedisWriter) replyArray(messages []string) []byte {
 	bs := []byte{TypeArray}
-	my := []byte(strconv.Itoa(len(messages)))
+	my := []byte(strconv.Itoa(len(messages)) + CRLF)
 	bs = append(bs, my...)
-	bs = append(bs, CRLF...)
 
 	for _, arg := range messages {
 		bs = append(bs, TypeBlobString)
-		str := []byte(strconv.Itoa(len(arg)))
+		str := []byte(strconv.Itoa(len(arg)) + CRLF + arg + CRLF)
 		bs = append(bs, str...)
-		bs = append(bs, CRLF...)
-		data := []byte(arg)
-		bs = append(bs, data...)
-		bs = append(bs, CRLF...)
 	}
 	return bs
 }
 
-func ReplyNull() []byte {
+func (w *RedisWriter) replyNull() []byte {
 	bs := []byte{TypeBlobString, '-', '1'}
 	bs = append(bs, CRLF...)
 	return bs
 }
-func ReplyNumber(num int) []byte {
+func (w *RedisWriter) replyNumber(num int) []byte {
 	bs := []byte{TypeNumber}
-	my := []byte(strconv.Itoa(num))
+	my := []byte(strconv.Itoa(num) + CRLF)
 	bs = append(bs, my...)
-	bs = append(bs, CRLF...)
 	return bs
 }

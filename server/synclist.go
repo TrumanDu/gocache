@@ -8,16 +8,16 @@ import (
 var lock sync.Mutex
 
 type SyncList struct {
-	l *list.List
+	list *list.List
 }
 
 func NewSyncList() *SyncList {
-	l := list.New()
-	return &SyncList{l}
+	list := list.New()
+	return &SyncList{list}
 }
 
 func (syncList *SyncList) Add(data interface{}) {
 	defer lock.Unlock()
 	lock.Lock()
-	(*syncList).l.PushFront(data)
+	(*syncList).list.PushFront(data)
 }
