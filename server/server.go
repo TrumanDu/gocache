@@ -14,6 +14,7 @@ import (
 
 var clientsMap = make(map[string]*clientConn)
 var ioPool = pool.NewPool(runtime.NumCPU())
+var aofHandle = NewAOFHandle()
 
 // 初始化socket 端口监听
 // epoll 建立client连接
@@ -71,7 +72,8 @@ func coreProcess(epoller *Epoller, connections []net.Conn) {
 	// 1.多线程读取解析client发来的数据（命令和数据类型等）
 	clientsReadSyncList := handleClientsWithPendingReadsUsingThreads(epoller, connections)
 	// 2.单线程执行command
-	responses := handleCommand((*clientsReadSyncList).list)
+	responses, aofBuf := handleCommand((*clientsReadSyncList).list)
+	appendAOF(aofBuf)
 	// 3.多线程向client发送响应数据
 	handleClientsWithPendingWritesUsingThreads(responses)
 }
@@ -101,8 +103,9 @@ func handleClientsWithPendingReadsUsingThreads(epoller *Epoller, connections []n
 	return clientsReadSyncList
 }
 
-func handleCommand(clientsRead *list.List) *list.List {
-	responseList := list.New()
+func handleCommand(clientsRead *list.List) (responseList *list.List, aofBuf []byte) {
+	responseList = list.New()
+	aofBuf = make([]byte, 0)
 	for e := clientsRead.Front(); e != nil; e = e.Next() {
 
 		data := e.Value.(*readData)
@@ -131,6 +134,8 @@ func handleCommand(clientsRead *list.List) *list.List {
 				} else {
 					cache.Set(array[1].Str, array[2].Str)
 					responseBytes = wt.replyString("OK")
+					raw := ValueToRow(value)
+					aofBuf = append(aofBuf, raw...)
 				}
 
 			case "exists":
@@ -156,6 +161,8 @@ func handleCommand(clientsRead *list.List) *list.List {
 					responseBytes = wt.replyInvalidSyntax()
 				} else {
 					responseBytes = wt.replyNumber(cache.Del(array[1].Str))
+					raw := ValueToRow(value)
+					aofBuf = append(aofBuf, raw...)
 				}
 			case "command":
 				empty := make([]string, 0)
@@ -171,7 +178,15 @@ func handleCommand(clientsRead *list.List) *list.List {
 		responseList.PushFront(obj)
 	}
 
-	return responseList
+	return responseList, aofBuf
+}
+
+func appendAOF(aofBuf []byte) {
+	if n := len(aofBuf); n > 0 {
+		aofHandle.Write(aofBuf)
+		aofHandle.Flush()
+	}
+
 }
 
 func handleClientsWithPendingWritesUsingThreads(responses *list.List) {

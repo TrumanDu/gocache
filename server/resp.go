@@ -189,3 +189,27 @@ func (w *RedisWriter) replyNumber(num int) []byte {
 	bs = append(bs, my...)
 	return bs
 }
+
+func ValueToRow(value *Value) []byte {
+	bs := []byte{value.Type}
+	switch value.Type {
+
+	case TypeSimpleError:
+		str := []byte(strconv.Itoa(len(value.Str)) + CRLF + value.Str + CRLF)
+		bs = append(bs, str...)
+	case TypeSimpleString:
+		log.Error("wait todo...")
+	case TypeArray:
+		array := value.Elems
+		l := []byte(strconv.Itoa(len(array)) + CRLF)
+		bs = append(bs, l...)
+		for _, arg := range array {
+			bs = append(bs, TypeBlobString)
+			str := []byte(strconv.Itoa(len(arg.Str)) + CRLF + arg.Str + CRLF)
+			bs = append(bs, str...)
+		}
+	default:
+		log.Error("wait todo...")
+	}
+	return bs
+}

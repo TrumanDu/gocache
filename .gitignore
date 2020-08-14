@@ -16,3 +16,4 @@
 /build/package/*exe
 .idea
 __debug_bin
+*.aof
