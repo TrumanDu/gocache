@@ -10,7 +10,7 @@ Redis协议解析（支持RESP2/3）|100%|仅实现了部分类型，详见以�
 多线程IO|100%|
 string 常用操作|100%|
 hash 常用操作||
-aof持久化||
+aof持久化|90%|
 集群分布式||
 
 ### 网络编程（Reactor）
@@ -40,6 +40,9 @@ set|set truman truman|OK|
 get|get truman |truman or null| 
 del|del truman |1 or 0| 
 exists|exists truman |1 or 0| 
+
+### AOF持久化实现
+[AOF持久化实现](docs/aof实现.md)
 ## 支持平台
 因为使用linux epoll，目前仅打算支持linux
 
