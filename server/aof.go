@@ -4,16 +4,19 @@ import (
 	"bufio"
 	"os"
 
+	"github.com/spf13/viper"
+
 	"github.com/TrumanDu/gocache/tools/log"
 )
 
 type AOFHandle struct {
 	file           *os.File
 	bufferedWriter *bufio.Writer
+	redisReader    *RedisReader
 }
 
 func NewAOFHandle() *AOFHandle {
-	fileName := "appendonly.aof"
+	fileName := viper.GetString("gocache.appendfilename")
 	_, err := os.Stat(fileName)
 	if err != nil {
 		_, err = os.Create(fileName)
@@ -22,14 +25,14 @@ func NewAOFHandle() *AOFHandle {
 		}
 	}
 
-	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_WRONLY, os.ModeAppend)
+	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_RDWR, os.ModeAppend)
 	if err != nil {
 		log.Error("open appendonly.aof has error", err)
 	}
 
 	bufferedWriter := bufio.NewWriter(file)
-
-	return &AOFHandle{file, bufferedWriter}
+	redisReader := NewRedisReader(file)
+	return &AOFHandle{file, bufferedWriter, redisReader}
 }
 
 func (handle *AOFHandle) Write(bytes []byte) {
@@ -37,6 +40,12 @@ func (handle *AOFHandle) Write(bytes []byte) {
 	if err != nil {
 		log.Error("Write appendonly.aof has error ", err)
 	}
+}
+
+func (handle *AOFHandle) ReadValue(offset int64) (*Value, error) {
+	handle.file.Seek(offset, 1)
+	value, error := handle.redisReader.ReadValue()
+	return value, error
 }
 
 func (handle *AOFHandle) Flush() {

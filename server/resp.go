@@ -36,7 +36,6 @@ const (
 type Value struct {
 	Type    byte
 	Str     string
-	StrFmt  string
 	Err     string
 	Integer int64
 	Boolean bool
@@ -46,6 +45,8 @@ type Value struct {
 	// KV           *linkedhashmap.Map
 	// Attrs        *linkedhashmap.Map
 	StreamMarker string
+
+	Size int64
 }
 
 var ErrInvalidSyntax = errors.New("resp:invalid syntax")
@@ -78,13 +79,14 @@ func (r *RedisReader) ReadValue() (*Value, error) {
 	switch v.Type {
 	case TypeSimpleString, TypeSimpleError:
 		v.Str, err = r.readSimpleString(line)
+		v.Size = int64(3) + int64(len(v.Str))
 	case TypeNumber, TypeBoolean, TypeDouble, TypeBigNumber:
 		// TODO 待实现
 		v.Str, err = r.readSimpleString(line)
 	case TypeBlobString, TypeBlobError:
-		v.Str, err = r.readBlobString(line)
+		v.Str, v.Size, err = r.readBlobString(line)
 	case TypeArray:
-		v.Elems, err = r.readArray(line)
+		v.Elems, v.Size, err = r.readArray(line)
 	}
 	return v, err
 }
@@ -102,43 +104,46 @@ func (r *RedisReader) readLine() ([]byte, error) {
 	return nil, ErrInvalidSyntax
 }
 
-func (r *RedisReader) getCount(line []byte) (int, error) {
+func (r *RedisReader) getCount(line []byte) (int, int, error) {
 	end := bytes.IndexByte(line, '\r')
-	return strconv.Atoi(string(line[1:end]))
+	count, err := strconv.Atoi(string(line[1:end]))
+	return count, end + 2, err
 }
 
 func (r *RedisReader) readSimpleString(line []byte) (string, error) {
 	return string(line[1 : len(line)-2]), nil
 }
 
-func (r *RedisReader) readBlobString(line []byte) (string, error) {
-	count, err := r.getCount(line)
+func (r *RedisReader) readBlobString(line []byte) (string, int64, error) {
+	count, index, err := r.getCount(line)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	buf := make([]byte, count+2)
 	_, err = io.ReadFull(r, buf)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	return string(buf[:count]), nil
+	return string(buf[:count]), int64(count) + int64(index+2), nil
 }
 
-func (r *RedisReader) readArray(line []byte) ([]*Value, error) {
-	count, err := r.getCount(line)
+func (r *RedisReader) readArray(line []byte) ([]*Value, int64, error) {
+	count, index, err := r.getCount(line)
+	byteSize := int64(index)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var values []*Value
 	for i := 0; i < count; i++ {
 		v, err := r.ReadValue()
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
+		byteSize = byteSize + v.Size
 		values = append(values, v)
 	}
 
-	return values, nil
+	return values, byteSize, nil
 }
 
 type RedisWriter struct {

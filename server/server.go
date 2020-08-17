@@ -4,17 +4,22 @@ import (
 	"container/list"
 	"net"
 	"runtime"
-	"strconv"
 	"strings"
+	"time"
 
 	"github.com/TrumanDu/gocache/store/cache"
 	log "github.com/TrumanDu/gocache/tools/log"
 	pool "github.com/TrumanDu/gocache/tools/pool"
+	"github.com/spf13/viper"
 )
 
 var clientsMap = make(map[string]*clientConn)
 var ioPool = pool.NewPool(runtime.NumCPU())
 var aofHandle = NewAOFHandle()
+var appendonly = false
+var appendfsync = viper.GetString("gocache.appendfsync")
+var aofBuf = make([]byte, 0)
+var aofSyncTime = time.Now().UnixNano()
 
 // 初始化socket 端口监听
 // epoll 建立client连接
@@ -22,10 +27,15 @@ var aofHandle = NewAOFHandle()
 // 主线程执行命令
 // 将结果返回给client
 func Run() {
-	port := 6379
-	address := ":" + strconv.Itoa(port)
-	listen, err := net.Listen("tcp", address)
-	log.Infof("listen port:%d", port)
+
+	loadAofFile()
+
+	if strings.EqualFold("yes", viper.GetString("gocache.appendonly")) {
+		appendonly = true
+	}
+	port := viper.GetString("gocache.port")
+	listen, err := net.Listen("tcp", ":"+port)
+	log.Infof("listen port:%s", port)
 	log.Infof("cpu num:%d", runtime.NumCPU())
 	if err != nil {
 		log.Error("listen fail:", err)
@@ -49,7 +59,9 @@ func Run() {
 			continue
 		}
 
-		coreProcess(epoller, connections)
+		if len(connections) > 0 {
+			coreProcess(epoller, connections)
+		}
 	}
 
 }
@@ -72,8 +84,13 @@ func coreProcess(epoller *Epoller, connections []net.Conn) {
 	// 1.多线程读取解析client发来的数据（命令和数据类型等）
 	clientsReadSyncList := handleClientsWithPendingReadsUsingThreads(epoller, connections)
 	// 2.单线程执行command
-	responses, aofBuf := handleCommand((*clientsReadSyncList).list)
-	appendAOF(aofBuf)
+	responses := handleCommand((*clientsReadSyncList).list)
+
+	if appendonly {
+		if len(aofBuf) > 0 {
+			appendAOF(aofBuf)
+		}
+	}
 	// 3.多线程向client发送响应数据
 	handleClientsWithPendingWritesUsingThreads(responses)
 }
@@ -103,7 +120,7 @@ func handleClientsWithPendingReadsUsingThreads(epoller *Epoller, connections []n
 	return clientsReadSyncList
 }
 
-func handleCommand(clientsRead *list.List) (responseList *list.List, aofBuf []byte) {
+func handleCommand(clientsRead *list.List) (responseList *list.List) {
 	responseList = list.New()
 	aofBuf = make([]byte, 0)
 	for e := clientsRead.Front(); e != nil; e = e.Next() {
@@ -122,7 +139,7 @@ func handleCommand(clientsRead *list.List) (responseList *list.List, aofBuf []by
 			log.Error("wait todo...")
 		case TypeArray:
 			array := value.Elems
-			command := strings.ToLower(array[0].Str)
+			command = strings.ToLower(array[0].Str)
 			switch command {
 			case "ping":
 				responseBytes = wt.replyString("PONG")
@@ -134,8 +151,6 @@ func handleCommand(clientsRead *list.List) (responseList *list.List, aofBuf []by
 				} else {
 					cache.Set(array[1].Str, array[2].Str)
 					responseBytes = wt.replyString("OK")
-					raw := ValueToRow(value)
-					aofBuf = append(aofBuf, raw...)
 				}
 
 			case "exists":
@@ -161,8 +176,6 @@ func handleCommand(clientsRead *list.List) (responseList *list.List, aofBuf []by
 					responseBytes = wt.replyInvalidSyntax()
 				} else {
 					responseBytes = wt.replyNumber(cache.Del(array[1].Str))
-					raw := ValueToRow(value)
-					aofBuf = append(aofBuf, raw...)
 				}
 			case "command":
 				empty := make([]string, 0)
@@ -174,19 +187,12 @@ func handleCommand(clientsRead *list.List) (responseList *list.List, aofBuf []by
 		default:
 			responseBytes = wt.replyInvalidSyntax()
 		}
+		appendAOFBuf(command, value)
 		obj := &responseData{id: data.id, command: command, data: responseBytes}
 		responseList.PushFront(obj)
 	}
 
-	return responseList, aofBuf
-}
-
-func appendAOF(aofBuf []byte) {
-	if n := len(aofBuf); n > 0 {
-		aofHandle.Write(aofBuf)
-		aofHandle.Flush()
-	}
-
+	return responseList
 }
 
 func handleClientsWithPendingWritesUsingThreads(responses *list.List) {
@@ -208,6 +214,83 @@ func handleClientsWithPendingWritesUsingThreads(responses *list.List) {
 		i = i + 1
 	}
 	ioPool.SyncRun(fs)
+}
+
+func appendAOF(aofBuf []byte) {
+	if n := len(aofBuf); n > 0 {
+		aofHandle.Write(aofBuf)
+		switch appendfsync {
+		case "always":
+			fsync()
+		case "everysec":
+			if nowTime := time.Now().UnixNano(); (nowTime - aofSyncTime) > 1e9 {
+				go fsync()
+			}
+		}
+	}
+
+}
+
+func fsync() {
+	aofHandle.Flush()
+	aofSyncTime = time.Now().UnixNano()
+}
+
+func appendAOFBuf(command string, value *Value) {
+	if appendonly {
+		switch strings.ToLower(command) {
+		case "set", "del":
+			raw := ValueToRow(value)
+			aofBuf = append(aofBuf, raw...)
+		}
+	}
+}
+
+func loadAofFile() {
+	if aofHandle != nil {
+		stat, err := aofHandle.file.Stat()
+		if err != nil {
+			log.Error("loadAofFile error:", err)
+		}
+		fileSize := stat.Size()
+
+		if fileSize > 0 {
+			i := int64(0)
+			for i < fileSize {
+				value, err := aofHandle.ReadValue(i)
+				if err != nil {
+					log.Error("loadAofFile ReadValue error:", err)
+				}
+				handleAOFReadCommand(value)
+				i = i + value.Size
+			}
+		}
+
+		log.Infof("loadAofFile success,aof size:%d", fileSize)
+	}
+}
+
+func handleAOFReadCommand(value *Value) {
+	command := ""
+	switch value.Type {
+	case TypeSimpleError:
+		log.Error(value.Err)
+	case TypeSimpleString:
+		log.Error("wait todo...")
+	case TypeArray:
+		array := value.Elems
+		command = strings.ToLower(array[0].Str)
+		switch command {
+		case "set":
+			cache.Set(array[1].Str, array[2].Str)
+		case "del":
+			cache.Del(array[1].Str)
+		default:
+			log.Error("wait todo...")
+		}
+	default:
+		log.Error("wait todo...")
+	}
 }
 
 type clientConn struct {

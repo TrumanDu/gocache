@@ -1,0 +1,5 @@
+gocache:
+  port: 6379 
+  appendonly: "yes"
+  appendfilename: "appendonly.aof"
+  appendfsync: "always"
